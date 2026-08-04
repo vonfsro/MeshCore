@@ -25,7 +25,10 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
 
 #ifdef DISPLAY_CLASS
   DISPLAY_CLASS display;
-  MomentaryButton user_btn(PIN_USER_BTN, 1000, true);
+  #ifndef USER_BUTTON_LONG_PRESS_MILLIS
+    #define USER_BUTTON_LONG_PRESS_MILLIS 1000
+  #endif
+  MomentaryButton user_btn(PIN_USER_BTN, USER_BUTTON_LONG_PRESS_MILLIS, true);
 #endif
 
 bool radio_init() {
@@ -43,4 +46,3 @@ mesh::LocalIdentity radio_new_identity() {
   RadioNoiseListener rng(radio);
   return mesh::LocalIdentity(&rng);  // create new random identity
 }
-

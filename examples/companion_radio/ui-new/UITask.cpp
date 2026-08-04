@@ -748,6 +748,18 @@ void UITask::loop() {
     c = handleTripleClick(KEY_SELECT);
   }
 #endif
+
+#ifdef USER_BUTTON_LONG_PRESS_POWEROFF
+  if (_poweroff_pending) {
+    // Do not enter deep sleep while the wake button is still active, otherwise
+    // it would wake the ESP32 immediately.
+    if (!isButtonPressed()) {
+      shutdown();
+    }
+    return;
+  }
+#endif
+
 #if defined(PIN_USER_BTN_ANA)
   if (abs(millis() - _analogue_pin_read_millis) > 10) {
     int ev = analog_btn.check();
@@ -863,11 +875,17 @@ char UITask::checkDisplayOn(char c) {
 }
 
 char UITask::handleLongPress(char c) {
+#ifdef USER_BUTTON_LONG_PRESS_POWEROFF
+  _poweroff_pending = true;
+  showAlert("Release to power off", 5000);
+  return 0;  // consume the button event
+#else
   if (millis() - ui_started_at < 8000) {   // long press in first 8 seconds since startup -> CLI/rescue
     the_mesh.enterCLIRescue();
     c = 0;   // consume event
   }
   return c;
+#endif
 }
 
 char UITask::handleDoubleClick(char c) {
