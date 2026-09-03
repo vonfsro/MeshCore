@@ -99,80 +99,93 @@ uint16_t SSD1306Display::getTextWidth(const char* str) {
   return w;
 }
 
-static const char* transliterateLatinCodepoint(uint32_t codepoint) {
+namespace {
+
+constexpr uint16_t packAscii(char first, char second = 0) {
+  return static_cast<uint8_t>(first) |
+         (static_cast<uint16_t>(static_cast<uint8_t>(second)) << 8);
+}
+
+constexpr uint16_t DROP_CODEPOINT = 0xFFFF;
+
+struct LatinRange {
+  uint16_t first;
+  uint16_t last;
+  char ascii;
+  bool alternate_case;
+  bool uppercase_is_odd;
+};
+
+static const LatinRange LATIN_RANGES[] = {
+  // Latin-1 Supplement
+  {0x00C0, 0x00C5, 'A', false, false}, {0x00E0, 0x00E5, 'a', false, false},
+  {0x00C8, 0x00CB, 'E', false, false}, {0x00E8, 0x00EB, 'e', false, false},
+  {0x00CC, 0x00CF, 'I', false, false}, {0x00EC, 0x00EF, 'i', false, false},
+  {0x00D2, 0x00D6, 'O', false, false}, {0x00D8, 0x00D8, 'O', false, false},
+  {0x00F2, 0x00F6, 'o', false, false}, {0x00F8, 0x00F8, 'o', false, false},
+  {0x00D9, 0x00DC, 'U', false, false}, {0x00F9, 0x00FC, 'u', false, false},
+
+  // Latin Extended-A: case normally alternates upper/lower by code point.
+  {0x0100, 0x0105, 'A', true, false}, {0x0106, 0x010D, 'C', true, false},
+  {0x010E, 0x0111, 'D', true, false}, {0x0112, 0x011B, 'E', true, false},
+  {0x011C, 0x0123, 'G', true, false}, {0x0124, 0x0127, 'H', true, false},
+  {0x0128, 0x0131, 'I', true, false}, {0x0134, 0x0135, 'J', true, false},
+  {0x0136, 0x0137, 'K', true, false}, {0x0139, 0x0142, 'L', true, true},
+  {0x0143, 0x0148, 'N', true, true},  {0x014C, 0x0151, 'O', true, false},
+  {0x0154, 0x0159, 'R', true, false}, {0x015A, 0x0161, 'S', true, false},
+  {0x0162, 0x0167, 'T', true, false}, {0x0168, 0x0173, 'U', true, false},
+  {0x0174, 0x0175, 'W', true, false}, {0x0176, 0x0177, 'Y', true, false},
+  {0x0179, 0x017E, 'Z', true, true},
+};
+
+uint16_t transliterateLatinCodepoint(uint32_t codepoint) {
   // A decomposed accent follows an already emitted base letter, so discard it.
-  if (codepoint >= 0x0300 && codepoint <= 0x036F) return "";
+  if (codepoint >= 0x0300 && codepoint <= 0x036F) return DROP_CODEPOINT;
 
-  // Latin-1 Supplement. Multi-letter forms retain useful distinctions while
-  // still fitting into the same number of bytes as their UTF-8 source.
-  if (codepoint >= 0x00C0 && codepoint <= 0x00C5) return "A"; // À-Å
-  if (codepoint >= 0x00E0 && codepoint <= 0x00E5) return "a"; // à-å
-  if (codepoint >= 0x00C8 && codepoint <= 0x00CB) return "E"; // È-Ë
-  if (codepoint >= 0x00E8 && codepoint <= 0x00EB) return "e"; // è-ë
-  if (codepoint >= 0x00CC && codepoint <= 0x00CF) return "I"; // Ì-Ï
-  if (codepoint >= 0x00EC && codepoint <= 0x00EF) return "i"; // ì-ï
-  if ((codepoint >= 0x00D2 && codepoint <= 0x00D6) || codepoint == 0x00D8) return "O";
-  if ((codepoint >= 0x00F2 && codepoint <= 0x00F6) || codepoint == 0x00F8) return "o";
-  if (codepoint >= 0x00D9 && codepoint <= 0x00DC) return "U"; // Ù-Ü
-  if (codepoint >= 0x00F9 && codepoint <= 0x00FC) return "u"; // ù-ü
+  for (const LatinRange& range : LATIN_RANGES) {
+    if (codepoint < range.first || codepoint > range.last) continue;
 
-  switch (codepoint) {
-    case 0x00C6: return "AE"; // Æ
-    case 0x00E6: return "ae"; // æ
-    case 0x00C7: return "C";  // Ç
-    case 0x00E7: return "c";  // ç
-    case 0x00D0: return "D";  // Ð
-    case 0x00F0: return "d";  // ð
-    case 0x00D1: return "N";  // Ñ
-    case 0x00F1: return "n";  // ñ
-    case 0x00DD: return "Y";  // Ý
-    case 0x00FD: case 0x00FF: return "y"; // ý ÿ
-    case 0x00DE: return "Th"; // Þ
-    case 0x00FE: return "th"; // þ
-    case 0x00DF: return "ss"; // ß
-    default: break;
+    char ascii = range.ascii;
+    if (range.alternate_case) {
+      const bool lowercase = static_cast<bool>(codepoint & 1) ^ range.uppercase_is_odd;
+      if (lowercase) ascii += 'a' - 'A';
+    }
+    return packAscii(ascii);
   }
 
-  // Latin Extended-A covers the accented alphabets used by most European
-  // languages, including Polish, Czech, Slovak, Hungarian and Baltic ones.
-  if (codepoint >= 0x0100 && codepoint <= 0x0105) return (codepoint & 1) ? "a" : "A";
-  if (codepoint >= 0x0106 && codepoint <= 0x010D) return (codepoint & 1) ? "c" : "C";
-  if (codepoint >= 0x010E && codepoint <= 0x0111) return (codepoint & 1) ? "d" : "D";
-  if (codepoint >= 0x0112 && codepoint <= 0x011B) return (codepoint & 1) ? "e" : "E";
-  if (codepoint >= 0x011C && codepoint <= 0x0123) return (codepoint & 1) ? "g" : "G";
-  if (codepoint >= 0x0124 && codepoint <= 0x0127) return (codepoint & 1) ? "h" : "H";
-  if (codepoint >= 0x0128 && codepoint <= 0x0131) return (codepoint & 1) ? "i" : "I";
-  if (codepoint >= 0x0134 && codepoint <= 0x0135) return (codepoint & 1) ? "j" : "J";
-  if (codepoint >= 0x0136 && codepoint <= 0x0137) return (codepoint & 1) ? "k" : "K";
-  if (codepoint == 0x0138) return "k";
-  if (codepoint >= 0x0139 && codepoint <= 0x0142) return (codepoint & 1) ? "L" : "l";
-  if (codepoint >= 0x0143 && codepoint <= 0x0148) return (codepoint & 1) ? "N" : "n";
-  if (codepoint == 0x0149 || codepoint == 0x014B) return "n";
-  if (codepoint == 0x014A) return "N";
-  if (codepoint >= 0x014C && codepoint <= 0x0151) return (codepoint & 1) ? "o" : "O";
-  if (codepoint >= 0x0154 && codepoint <= 0x0159) return (codepoint & 1) ? "r" : "R";
-  if (codepoint >= 0x015A && codepoint <= 0x0161) return (codepoint & 1) ? "s" : "S";
-  if (codepoint >= 0x0162 && codepoint <= 0x0167) return (codepoint & 1) ? "t" : "T";
-  if (codepoint >= 0x0168 && codepoint <= 0x0173) return (codepoint & 1) ? "u" : "U";
-  if (codepoint >= 0x0174 && codepoint <= 0x0175) return (codepoint & 1) ? "w" : "W";
-  if (codepoint >= 0x0176 && codepoint <= 0x0177) return (codepoint & 1) ? "y" : "Y";
-  if (codepoint >= 0x0179 && codepoint <= 0x017E) return (codepoint & 1) ? "Z" : "z";
-  if (codepoint >= 0x0300 && codepoint <= 0x036F) return ""; // combining diacritics
-
+  // Irregular and multi-letter transliterations.
   switch (codepoint) {
-    case 0x0132: return "IJ"; // Ĳ
-    case 0x0133: return "ij"; // ĳ
-    case 0x0152: return "OE"; // Œ
-    case 0x0153: return "oe"; // œ
-    case 0x0178: return "Y";  // Ÿ
-    case 0x017F: return "s";  // long s
-    case 0x0218: return "S";  // Ș (Romanian)
-    case 0x0219: return "s";  // ș
-    case 0x021A: return "T";  // Ț
-    case 0x021B: return "t";  // ț
-    default: return nullptr;
+    case 0x00C6: return packAscii('A', 'E'); // Æ
+    case 0x00E6: return packAscii('a', 'e'); // æ
+    case 0x00C7: return packAscii('C');      // Ç
+    case 0x00E7: return packAscii('c');      // ç
+    case 0x00D0: return packAscii('D');      // Ð
+    case 0x00F0: return packAscii('d');      // ð
+    case 0x00D1: return packAscii('N');      // Ñ
+    case 0x00F1: return packAscii('n');      // ñ
+    case 0x00DD: return packAscii('Y');      // Ý
+    case 0x00FD: case 0x00FF: return packAscii('y');
+    case 0x00DE: return packAscii('T', 'h'); // Þ
+    case 0x00FE: return packAscii('t', 'h'); // þ
+    case 0x00DF: return packAscii('s', 's'); // ß
+    case 0x0132: return packAscii('I', 'J'); // Ĳ
+    case 0x0133: return packAscii('i', 'j'); // ĳ
+    case 0x0138: return packAscii('k');      // ĸ
+    case 0x0149: case 0x014B: return packAscii('n');
+    case 0x014A: return packAscii('N');
+    case 0x0152: return packAscii('O', 'E'); // Œ
+    case 0x0153: return packAscii('o', 'e'); // œ
+    case 0x0178: return packAscii('Y');      // Ÿ
+    case 0x017F: return packAscii('s');
+    case 0x0218: return packAscii('S');      // Romanian Ș
+    case 0x0219: return packAscii('s');
+    case 0x021A: return packAscii('T');
+    case 0x021B: return packAscii('t');
+    default: return 0;
   }
 }
+
+} // namespace
 
 void SSD1306Display::translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) {
   if (dest == nullptr || dest_size == 0) return;
@@ -209,10 +222,13 @@ void SSD1306Display::translateUTF8ToBlocks(char* dest, const char* src, size_t d
       }
     }
 
-    const char* replacement = transliterateLatinCodepoint(codepoint);
-    if (replacement != nullptr) {
-      while (*replacement != 0 && output < dest_size - 1) {
-        dest[output++] = *replacement++;
+    const uint16_t replacement = transliterateLatinCodepoint(codepoint);
+    if (replacement == DROP_CODEPOINT) {
+      // Nothing to emit.
+    } else if (replacement != 0) {
+      dest[output++] = static_cast<char>(replacement & 0xFF);
+      if ((replacement >> 8) != 0 && output < dest_size - 1) {
+        dest[output++] = static_cast<char>(replacement >> 8);
       }
     } else {
       dest[output++] = '\xDB';
