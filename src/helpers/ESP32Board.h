@@ -22,6 +22,10 @@ protected:
   bool inhibit_sleep = false;
   static inline portMUX_TYPE sleepMux = portMUX_INITIALIZER_UNLOCKED;
 
+  // Board-specific wake source for deep sleep. The default keeps power-off
+  // wake sources disabled; boards with a soft power button can override it.
+  virtual void configureDeepSleepWakeup() { }
+
 public:
   void begin() {
     // for future use, sub-classes SHOULD call this from their begin()

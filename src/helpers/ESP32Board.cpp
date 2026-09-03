@@ -79,6 +79,8 @@ void ESP32Board::enterDeepSleep(uint32_t secs) {
   // This is required when Power Management and automatic lightsleep are enabled
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
 
+  configureDeepSleepWakeup();
+
   if (secs > 0) {
     esp_sleep_enable_timer_wakeup(secs * 1000000ULL);
   }

@@ -21,6 +21,16 @@ class HeltecV3Board : public ESP32Board {
 private:
   bool adc_active_state;
 
+protected:
+  void configureDeepSleepWakeup() override {
+#ifdef PIN_USER_BTN
+    // Soft power-off: PRG is active LOW and is the only wake source.
+    rtc_gpio_set_direction((gpio_num_t)PIN_USER_BTN, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en((gpio_num_t)PIN_USER_BTN);
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_USER_BTN, 0);
+#endif
+  }
+
 public:
   RefCountedDigitalPin periph_power;
 
@@ -51,42 +61,6 @@ public:
       rtc_gpio_deinit((gpio_num_t)PIN_USER_BTN);
 #endif
     }
-  }
-
-  void enterDeepSleep(uint32_t secs, int pin_wake_btn = -1) {
-    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
-
-    // Make sure the DIO1 and NSS GPIOs are hold on required levels during deep sleep
-    rtc_gpio_set_direction((gpio_num_t)P_LORA_DIO_1, RTC_GPIO_MODE_INPUT_ONLY);
-    rtc_gpio_pulldown_en((gpio_num_t)P_LORA_DIO_1);
-
-    rtc_gpio_hold_en((gpio_num_t)P_LORA_NSS);
-
-    if (pin_wake_btn >= 0) {
-      // Soft power-off: Heltec V3 PRG is active LOW and is the only wake
-      // source. LoRa wake-up must stay disabled so this behaves like a
-      // physical battery switch.
-      rtc_gpio_set_direction((gpio_num_t)pin_wake_btn, RTC_GPIO_MODE_INPUT_ONLY);
-      rtc_gpio_pullup_en((gpio_num_t)pin_wake_btn);
-      esp_sleep_enable_ext0_wakeup((gpio_num_t)pin_wake_btn, 0);
-    } else {
-      esp_sleep_enable_ext1_wakeup(1ULL << P_LORA_DIO_1, ESP_EXT1_WAKEUP_ANY_HIGH);  // wake on received LoRa packet
-    }
-
-    if (secs > 0) {
-      esp_sleep_enable_timer_wakeup(secs * 1000000);
-    }
-
-    // Finally set ESP32 into sleep
-    esp_deep_sleep_start();   // CPU halts here and never returns!
-  }
-
-  void powerOff() override {
-#ifdef PIN_USER_BTN
-    enterDeepSleep(0, PIN_USER_BTN);
-#else
-    enterDeepSleep(0);
-#endif
   }
 
   uint16_t getBattMilliVolts() override {
